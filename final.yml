@@ -1,0 +1,108 @@
+---
+- name: Provision Azure Linux VM
+  hosts: localhost
+  connection: local
+  become_user: root
+  gather_facts: yes
+
+  vars:
+    azure_resource_group: "network_project"
+    azure_location: "eastus"
+    azure_vm_name: "networkvm"
+    azure_vm_image_publisher: "Canonical"
+    azure_vm_image_offer: "UbuntuServer"
+    azure_vm_image_sku: "18.04-LTS"
+    azure_vm_image_version: "latest"
+    admin_username: "azureuser"
+    ssh_key_path: "/root/.ssh/id_rsa.pub"  # Path to your SSH public key file
+    docker_container_name: "apache_container"
+    docker_image: "httpd:latest"
+    webpage_content: "Project Done"
+    vnet_name: "network_project_vnet"
+    vnet_address_prefixes_cidr: "10.0.0.0/16"
+    subnet_name: "network_subnet_project"
+    subnet_address_prefix_cidr: "10.0.0.0/24"
+    nic_name: "network_vm-nic"
+    public_ip_name: "network_project_public_ip"
+
+  tasks:
+    - name: Create Azure resource group
+      azure_rm_resourcegroup:
+        name: "{{ azure_resource_group }}"
+        location: "{{ azure_location }}"
+
+    - name: Create Virtual Network
+      azure_rm_virtualnetwork:
+        resource_group: "{{ azure_resource_group }}"
+        name: "{{ vnet_name }}"
+        address_prefixes_cidr:
+          - "{{ vnet_address_prefixes_cidr }}"
+
+    - name: Create Subnet
+      azure_rm_subnet:
+        resource_group: "{{ azure_resource_group }}"
+        virtual_network_name: "{{ vnet_name }}"
+        name: "{{ subnet_name }}"
+        address_prefix: "{{ subnet_address_prefix_cidr }}"
+
+
+    - name: Create Network Interface
+      azure_rm_networkinterface:
+        resource_group: "{{ azure_resource_group }}"
+        name: "{{ nic_name }}"
+        virtual_network: "{{ vnet_name }}"
+        subnet: "{{ subnet_name }}"
+        public_ip_name: "{{ public_ip_name }}"
+      register: nic_creation_result
+
+    - name: Introduce a 90-second delay
+      pause:
+        seconds: 90
+
+    - name: Create Network Security Group
+      azure_rm_securitygroup:
+        resource_group: "{{ azure_resource_group }}"
+        name: "{{ nic_name }}"
+        rules:
+          - name: "Allow_HTTP"
+            protocol: "Tcp"
+            destination_port_range: "80"
+            access: "Allow"
+            priority: 1001
+            direction: "Inbound" 
+
+    - name: Create Public IP
+      azure_rm_publicipaddress:
+        resource_group: "{{ azure_resource_group }}"
+        allocation_method: "Static"
+        name: "{{ public_ip_name }}"
+
+    - name: Create Azure VM
+      azure_rm_virtualmachine:
+        resource_group: "{{ azure_resource_group }}"
+        name: "{{ azure_vm_name }}"
+        vm_size: "Standard_B1s"
+        image:
+          offer: "{{ azure_vm_image_offer }}"
+          publisher: "{{ azure_vm_image_publisher }}"
+          sku: "{{ azure_vm_image_sku }}"
+          version: "{{ azure_vm_image_version }}"
+        admin_username: "{{ admin_username }}"
+        admin_password: Password123123
+        ssh_public_keys:
+          - path: "/home/{{ admin_username }}/.ssh/authorized_keys"
+            key_data: "{{ lookup('file', ssh_key_path) }}"
+        os_disk_caching: ReadWrite
+        network_interfaces:
+          - name: "{{ nic_name }}"
+            primary: true
+            ip_configurations:
+              - name: ipconfig1
+                subnet_name: "{{ subnet_name }}"
+                public_ip_address_name: "{{ public_ip_name }}"
+        state: present
+
+    - name: Introduce a 90-second delay
+      pause:
+        seconds: 90
+
